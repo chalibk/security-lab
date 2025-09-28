@@ -1,0 +1,23 @@
+name: Run Docker in GitHub Actions
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  docker-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: docker build -t my-app .
+
+      - name: Run Docker container
+        run: docker run my-app
