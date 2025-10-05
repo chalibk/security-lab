@@ -1,0 +1,81 @@
+name: Trivy repo scan (on push & PR)
+
+on:
+  push:
+    branches: ["main"]           # change if you use another default branch
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write    # required to upload SARIF
+  issues: write             # optional (only if you create issues)
+
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+    outputs:
+      high_and_critical: ${{ steps.count.outputs.high_and_critical }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (filesystem / repository scan)
+        id: trivy
+        uses: aquasecurity/trivy-action@v0.27.2
+        with:
+          scan-type: fs                 # 'fs' scans checked-out files; use 'repo' for other modes
+          format: json                  # write JSON (we'll also create SARIF)
+          output: trivy-results.json
+          severity: CRITICAL,HIGH,MEDIUM # adjust if you want fewer severities
+          ignore-unfixed: false
+          exit-code: 0                  # make sure the action itself doesn't exit non-zero
+        # Note: trivy-action caches DB by default to speed up runs. See action docs. :contentReference[oaicite:1]{index=1}
+
+      - name: Ensure SARIF exists (convert JSON -> SARIF)
+        if: always()
+        run: |
+          # Install Trivy CLI temporarily (needed to convert JSON -> SARIF)
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.30.5
+          if [ -f trivy-results.json ]; then
+            trivy fs --format sarif --output trivy-results.sarif . || true
+            # Some Trivy versions convert from JSON differently; generate SARIF directly from workspace as fallback.
+          fi
+
+      - name: Upload SARIF to GitHub Security (Code scanning)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Upload Trivy JSON artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results-json
+          path: trivy-results.json
+
+      - name: Count HIGH + CRITICAL findings
+        id: count
+        run: |
+          if [ ! -f trivy-results.json ]; then
+            echo "high_and_critical=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Count vulnerabilities with severity HIGH or CRITICAL
+          COUNT=$(jq '[.[]?.Vulnerabilities? // [] | .[] | select(.Severity=="HIGH" or .Severity=="CRITICAL")] | length' trivy-results.json)
+          echo "high_and_critical=${COUNT}" >> $GITHUB_OUTPUT
+          echo "Found ${COUNT} HIGH/CRITICAL vulnerabilities."
+
+      - name: Fail if HIGH/CRITICAL found
+        if: ${{ steps.count.outputs.high_and_critical != '0' }}
+        run: |
+          echo "Failing because of HIGH/CRITICAL vulnerabilities: ${{ steps.count.outputs.high_and_critical }}"
+          exit 1
+
+      - name: Success - no HIGH/CRITICAL
+        if: ${{ steps.count.outputs.high_and_critical == '0' }}
+        run: echo "No HIGH or CRITICAL vulnerabilities found in this commit."
+
