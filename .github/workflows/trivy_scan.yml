@@ -12,6 +12,8 @@ jobs:
   build:
     name: Scan nginx:latest with Trivy
     runs-on: ubuntu-latest
+    permissions:
+      contents: write 
 
     steps:
       - name: Checkout repository
@@ -43,14 +45,14 @@ jobs:
           trivy image --format json --ignore-unfixed --vuln-type os,library --severity CRITICAL,HIGH,MEDIUM,LOW -o "$OUTPUT_FILE" nginx:latest
 
       - name: Verify scan results exist
-        run: ls -l "GitHub Actions/Trivy Automation/"
+        run: ls -l "security-lab/Trivy_Automation/"
 
       - name: Commit scan results to repository
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.mytoken }}
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add "security-lab/Trivy_Automation/scan-results-${DATE}.json"
           git commit -m "Add Trivy scan results (${DATE})"
-          git push origin HEAD:main
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
