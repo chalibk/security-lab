@@ -1,0 +1,64 @@
+name: Falco Runtime Security Scan
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  falco-scan:
+    name: Run Falco and Save Alerts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Date for Log Naming
+        id: set-date
+        run: echo "DATE=$(date +%m.%d.%Y_%H-%M-%S)" >> $GITHUB_ENV
+
+      - name: Create output directory
+        run: mkdir -p security-lab/Falco_Logs
+
+      - name: Install Falco
+        run: |
+          sudo apt-get update -y
+	  sudo apt-get install -y curl gnupg apt-transport-https
+	  curl -fsSL https://download.falco.org/packages/deb/falco.org.gpg | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | sudo tee /etc/apt/sources.list.d/falco.list
+	  sudo apt-get update -y
+	  sudo apt-get install -y falco
+
+      - name: Start Falco in background (JSON mode)
+        run: |
+          sudo falco --json > security-lab/Falco_Logs/falco-alerts-${DATE}.json 2>&1 &
+          sleep 5
+          echo "Falco started in JSON mode"
+
+      - name: Run test container and simulate malicious behavior
+        run: |
+          docker run --rm -d --name falco-test ubuntu:latest sleep 60
+          # Simulate suspicious action (access /etc/shadow)
+          docker exec falco-test bash -c "cat /etc/shadow || true"
+          sleep 10
+
+      - name: Stop Falco
+        run: sudo pkill falco || true
+
+      - name: Show captured Falco alerts
+        run: cat security-lab/Falco_Logs/falco-alerts-${DATE}.json || echo "No alerts found"
+
+      - name: Commit Falco JSON log to repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "actions@github.com"
+          git add security-lab/Falco_Logs/falco-alerts-${DATE}.json
+          git commit -m "Add Falco alerts (${DATE})"
+          git push origin HEAD:main
+
