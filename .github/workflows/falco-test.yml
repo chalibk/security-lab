@@ -1,0 +1,21 @@
+name: Falco Unauthorized Access Test
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build test container
+        run: docker build -t falco-unauth-test .
+
+      - name: Check for Falco alerts
+        run: |
+          echo "Checking Falco alerts for the last few minutes..."
+          sudo journalctl -u falco --since "5 minutes ago" | grep "Falco alert" || echo "No alerts detected."
