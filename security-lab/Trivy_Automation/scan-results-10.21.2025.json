@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 2,
-  "CreatedAt": "2025-10-21T12:45:18.54956523Z",
+  "CreatedAt": "2025-10-21T12:53:55.995414551Z",
   "ArtifactName": "nginx:latest",
   "ArtifactType": "container_image",
   "Metadata": {
