@@ -1,11 +1,5 @@
-# Use official Node.js image
-FROM node:18
+FROM alpine:latest
+RUN echo "Testing Falco detection"
+# Simulate unauthorized file access
+RUN cat /etc/shadow || true
 
-# Set working directory
-WORKDIR /app
-
-# Copy files into container
-COPY . .
-
-# Run a simple command
-CMD ["node", "-v"]
