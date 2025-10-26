@@ -1,5 +1,7 @@
 name: Trivy Security Scan for NGINX
 
+#condition
+
 on:
   push:
     branches:
