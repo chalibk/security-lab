@@ -1,0 +1,56 @@
+name: Falco experiment - detect /etc/shadow access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-falco:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Start Falco (live, mode)
+      # PIN to a commit-sha in practice
+      uses: falcosecurity/falco-actions/start@main
+
+
+      with:
+        mode: live
+        falco-version: 'latest'        # or pin to a version like '0.39.0'
+        verbose: true
+        # optional: pass a custom Falco rule file path from the repo
+        custom-rule-file: 'falco-rules/custom_sensitive.yaml'
+
+    - name: Run benign step (control)
+      run: |
+        echo "This is a control step. No suspicious actions here."
+        uname -a
+
+    - name: Run test container that reads /etc/shadow
+      run: |
+        # two approaches: (A) run ephemeral container and cat /etc/shadow
+        docker run --rm ubuntu:22.04 bash -lc "sleep 1; cat /etc/shadow || true"
+
+        # OR (B) run detached, then exec into it (useful to see process spawn)
+        # docker run -d --name evil ubuntu:22.04 sleep infinity
+        # docker exec evil bash -lc "cat /etc/shadow || true"
+        # docker rm -f evil
+
+      # if docker isn't available on your runner, replace with a step that simulates file reads
+
+    - name: Stop Falco (live mode)
+      uses: falcosecurity/falco-actions/stop@main
+      with:
+        mode: live
+        verbose: true
+
+    - name: Show Falco summary artifact (if analyze mode used)
+      if: always()
+      run: |
+        echo "If using analyze mode, the analyzers will upload artifacts and the analyze job will produce a report."
+
