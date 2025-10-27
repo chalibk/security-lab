@@ -1,5 +1,6 @@
 name: Trivy Security Scan for NGINX
 
+
 #condition
 
 on:
@@ -44,7 +45,8 @@ jobs:
         run: |
           OUTPUT_FILE="security-lab/Trivy_Automation/scan-results-${DATE}.json"
           mkdir -p "security-lab/Trivy_Automation"
-          trivy image --format json --ignore-unfixed --vuln-type os,library --severity CRITICAL,HIGH,MEDIUM,LOW -o "$OUTPUT_FILE" nginx:latest
+          trivy image --format json --vuln-type os,library --severity CRITICAL,HIGH,MEDIUM,LOW -o "$OUTPUT_FILE" nginx:latest
+
 
       - name: Verify scan results exist
         run: ls -l "security-lab/Trivy_Automation/"
