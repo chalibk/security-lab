@@ -1,0 +1,41 @@
+name: Trivy Vulnerability Scan
+
+on:
+  workflow_dispatch:
+
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Trivy
+      - name: Install Trivy
+        run: |
+          sudo apt-get update -y
+          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_Linux-64bit.tar.gz
+          tar zxvf trivy_Linux-64bit.tar.gz
+          sudo mv trivy /usr/local/bin/
+
+      # Step 3: Create output directory
+      - name: Create results directory
+        run: mkdir -p security-lab/Trivy_Automation
+
+      # Step 4: Run Trivy image scan on nginx:latest
+      - name: Run Trivy scan and save output
+        run: |
+          DATE=$(date +%Y-%m-%d_%H-%M-%S)
+          OUTPUT_FILE="security-lab/Trivy_Automation/scan-results-${DATE}.json"
+          trivy image --format json --output "$OUTPUT_FILE" nginx:latest
+          echo "Scan completed. Results saved to $OUTPUT_FILE"
+
+
+      # Step 5: Upload the scan result as an artifact (optional)
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-results
+          path: security-lab/Trivy_Automation/
