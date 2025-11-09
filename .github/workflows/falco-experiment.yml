@@ -24,7 +24,7 @@ jobs:
         falco-version: 'latest'        # or pin to a version like '0.39.0'
         verbose: true
         # optional: pass a custom Falco rule file path from the repo
-        custom-rule-file: 'falco-rules/custom_sensitive.yml'
+        custom-rule-file: '${{ github.workspace }}falco-rules/custom_sensitive.yml'
 
     - name: Run benign step (control)
       run: |
