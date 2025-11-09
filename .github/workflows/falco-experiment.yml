@@ -6,92 +6,63 @@ on:
 jobs:
   test-falco:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
 
     steps:
-    # -----------------------------------------------------
-    # 1️⃣ Checkout repository so Falco can access rule file
-    # -----------------------------------------------------
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # -----------------------------------------------------
-    # 2️⃣ Verify rule file presence and absolute path
-    # -----------------------------------------------------
     - name: Verify custom rule file
       run: |
-        echo "Repository workspace: $GITHUB_WORKSPACE"
-        echo "Listing falco-rules directory:"
-        ls -R falco-rules || echo "falco-rules directory not found!"
-        echo "Expected custom rule path: $GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml"
+        echo "Checking for custom rule..."
+        ls -l $GITHUB_WORKSPACE/falco-rules/custom_sensitive.yaml || exit 1
 
-    # -----------------------------------------------------
-    # 3️⃣ Start Falco in live mode with custom rule
-    # -----------------------------------------------------
     - name: Start Falco (live mode)
       uses: falcosecurity/falco-actions/start@main
       with:
         mode: live
         falco-version: 'latest'
         verbose: true
-        custom-rule-file: '${{ github.workspace }}/falco-rules/custom_sensitive.yaml'
+        custom-rule-file: '${{ github.workspace }}/falco-rules/custom_sensitive.yml'
 
-    # -----------------------------------------------------
-    # 4️⃣ Benign control step (no alerts expected)
-    # -----------------------------------------------------
     - name: Run benign control step
       run: |
-        echo "This step performs harmless actions — no Falco alerts should appear."
+        echo "Running harmless commands"
         uname -a
-        echo "Control step complete."
 
-    # -----------------------------------------------------
-    # 5️⃣ Trigger Falco alert by reading /etc/shadow
-    # -----------------------------------------------------
     - name: Run test container that reads /etc/shadow
       run: |
-        echo "Running test container to simulate /etc/shadow access..."
+        echo "Triggering Falco rule by reading /etc/shadow"
         docker run --rm ubuntu:22.04 bash -lc "sleep 1; cat /etc/shadow || true"
 
-    # -----------------------------------------------------
-    # 6️⃣ Wait briefly so Falco can log the event
-    # -----------------------------------------------------
     - name: Wait for Falco to capture alerts
       run: |
-        echo "Waiting 5 seconds to let Falco process runtime events..."
-        sleep 5
+        echo "Waiting 10 seconds for Falco to process events..."
+        sleep 10
 
-    # -----------------------------------------------------
-    # 7️⃣ Inspect Falco output before stopping
-    # -----------------------------------------------------
+    - name: Inspect Falco container logs
+      run: |
+        echo "Checking Falco runtime logs..."
+        docker logs falco || echo "No logs from Falco container."
+
     - name: Display Falco alert log (if present)
       run: |
-        echo "Checking Falco events file..."
+        echo "Displaying Falco event log..."
         if [[ -s /tmp/falco_events.json ]]; then
-          echo "Falco event log found. Displaying contents:"
           cat /tmp/falco_events.json
         else
-          echo "No Falco events recorded (file missing or empty)."
+          echo "⚠️ No Falco events recorded (file missing or empty)."
         fi
 
-    # -----------------------------------------------------
-    # 8️⃣ Stop Falco container
-    # -----------------------------------------------------
     - name: Stop Falco (live mode)
       uses: falcosecurity/falco-actions/stop@main
       with:
         mode: live
         verbose: true
 
-    # -----------------------------------------------------
-    # 9️⃣ Upload Falco log as artifact (optional)
-    # -----------------------------------------------------
     - name: Upload Falco events log
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: falco-events
         path: /tmp/falco_events.json
-        if-no-files-found: ignore
+        if-no-files-found: warn
