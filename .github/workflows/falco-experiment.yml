@@ -14,7 +14,7 @@ jobs:
     - name: Verify custom rule file
       run: |
         echo "Checking for custom rule..."
-        ls -l $GITHUB_WORKSPACE/falco-rules/custom_sensitive.yaml || exit 1
+        ls -l $GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml || exit 1
 
     - name: Start Falco (live mode)
       uses: falcosecurity/falco-actions/start@main
