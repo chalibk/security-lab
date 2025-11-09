@@ -36,8 +36,8 @@ jobs:
 
     - name: Wait for Falco to capture alerts
       run: |
-        echo "Waiting 10 seconds for Falco to process events..."
-        sleep 10
+        echo "Waiting 20 seconds for Falco to process events..."
+        sleep 20
 
     - name: Inspect Falco container logs
       run: |
