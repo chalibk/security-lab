@@ -1,6 +1,6 @@
 - rule: Read-Access-To-etc-shadow
-  desc: Detect processes opening /etc/shadow inside any container
+  desc: Detect processes opening shadow files
   condition: (evt.type in (open, openat) and fd.name contains "shadow")
-  output: "Suspicious read of /etc/shadow (user=%user.name pid=%proc.pid proc=%proc.name cmdline=%proc.cmdline fd=%fd.name)"
+  output: "Suspicious read of shadow file (user=%user.name pid=%proc.pid proc=%proc.name cmdline=%proc.cmdline fd=%fd.name)"
   priority: CRITICAL
   tags: [suspicious, sensitive_file]
