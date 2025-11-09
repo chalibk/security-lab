@@ -6,71 +6,47 @@ on:
 jobs:
   test-falco:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Verify custom rule file
-      run: |
-        echo "Checking for custom rule..."
-        if [[ ! -f "$GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml" ]]; then
-          echo "Custom rule file not found!"
-          exit 1
-        fi
-        ls -l "$GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml"
+      - name: Verify custom rule file
+        run: |
+          ls -l falco-rules/custom_sensitive.yml
 
-    - name: Start Falco (live mode)
-      uses: falcosecurity/falco-actions/start@main
-      with:
-        mode: live
-        falco-version: 'latest'
-        verbose: true
-        custom-rule-file: ${{ github.workspace }}/falco-rules/custom_sensitive.yml
+      - name: Start Falco (live mode)
+        run: |
+          docker run -d --name falco \
+            --privileged \
+            -v /var/run/docker.sock:/host/var/run/docker.sock \
+            -v /dev:/host/dev:ro \
+            -v /proc:/host/proc:ro \
+            -v /boot:/host/boot:ro \
+            -v /etc:/host/etc:ro \
+            -v $(pwd)/falco-rules:/etc/falco/rules.d:ro \
+            falcosecurity/falco:latest
 
-    - name: Run benign control step
-      run: |
-        echo "Running harmless commands..."
-        uname -a
+      - name: Run benign control step
+        run: echo "This is a control step, should not trigger Falco"
 
-    - name: Run test container that reads /etc/shadow
-      run: |
-        echo "Triggering Falco rule by reading /etc/shadow..."
-        docker run --rm ubuntu:22.04 bash -lc "sleep 1; cat /etc/shadow || true"
+      - name: Run test container that reads /etc/shadow
+        run: |
+          docker run --rm \
+            -v /etc/shadow:/etc/shadow:ro \
+            ubuntu:22.04 \
+            cat /etc/shadow || true
 
-    - name: Wait for Falco to capture alerts
-      run: |
-        echo "Waiting 120 seconds for Falco to process events..."
-        sleep 120
+      - name: Wait for Falco to capture alerts
+        run: sleep 10
 
-    - name: Inspect Falco container logs
-      run: |
-        echo "Checking Falco runtime logs..."
-        if docker ps --format '{{.Names}}' | grep -q '^falco$'; then
-          docker logs falco
-        else
-          echo "Falco container not running."
-        fi
+      - name: Inspect Falco container logs
+        run: |
+          docker logs falco | grep "Suspicious read of /etc/shadow" || echo "No alerts yet"
 
-    - name: Display Falco alert log (if present)
-      run: |
-        echo "Displaying Falco event log..."
-        if [[ -s /tmp/falco_events.json ]]; then
-          cat /tmp/falco_events.json
-        else
-          echo "No Falco events recorded (file missing or empty)."
-        fi
+      - name: Stop Falco
+        run: docker stop falco
 
-    - name: Stop Falco (live mode)
-      uses: falcosecurity/falco-actions/stop@main
-      with:
-        mode: live
-        verbose: true
-
-    - name: Upload Falco events log
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: falco-events
-        path: /tmp/falco_events.json
-        if-no-files-found: warn
+      - name: Upload Falco events log
+        run: |
+          docker logs falco > falco_events.log
+          cat falco_events.log
