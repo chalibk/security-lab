@@ -1,8 +1,6 @@
-# falco-rules/custom_sensitive.yaml
 - rule: Read-Access-To-etc-shadow
-  desc: Detect processes opening /etc/shadow
-  condition: (evt.type in (open, openat) and fd.name = "/etc/shadow")
+  desc: Detect processes opening /etc/shadow inside any container
+  condition: (evt.type in (open, openat) and fd.name contains "shadow")
   output: "Suspicious read of /etc/shadow (user=%user.name pid=%proc.pid proc=%proc.name cmdline=%proc.cmdline fd=%fd.name)"
   priority: CRITICAL
   tags: [suspicious, sensitive_file]
-
