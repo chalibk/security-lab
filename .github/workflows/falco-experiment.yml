@@ -14,7 +14,11 @@ jobs:
     - name: Verify custom rule file
       run: |
         echo "Checking for custom rule..."
-        ls -l $GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml || exit 1
+        if [[ ! -f "$GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml" ]]; then
+          echo "Custom rule file not found!"
+          exit 1
+        fi
+        ls -l "$GITHUB_WORKSPACE/falco-rules/custom_sensitive.yml"
 
     - name: Start Falco (live mode)
       uses: falcosecurity/falco-actions/start@main
@@ -22,16 +26,16 @@ jobs:
         mode: live
         falco-version: 'latest'
         verbose: true
-        custom-rule-file: '${{ github.workspace }}/falco-rules/custom_sensitive.yml'
+        custom-rule-file: ${{ github.workspace }}/falco-rules/custom_sensitive.yml
 
     - name: Run benign control step
       run: |
-        echo "Running harmless commands"
+        echo "Running harmless commands..."
         uname -a
 
     - name: Run test container that reads /etc/shadow
       run: |
-        echo "Triggering Falco rule by reading /etc/shadow"
+        echo "Triggering Falco rule by reading /etc/shadow..."
         docker run --rm ubuntu:22.04 bash -lc "sleep 1; cat /etc/shadow || true"
 
     - name: Wait for Falco to capture alerts
@@ -42,7 +46,11 @@ jobs:
     - name: Inspect Falco container logs
       run: |
         echo "Checking Falco runtime logs..."
-        docker logs falco || echo "No logs from Falco container."
+        if docker ps --format '{{.Names}}' | grep -q '^falco$'; then
+          docker logs falco
+        else
+          echo "Falco container not running."
+        fi
 
     - name: Display Falco alert log (if present)
       run: |
@@ -50,7 +58,7 @@ jobs:
         if [[ -s /tmp/falco_events.json ]]; then
           cat /tmp/falco_events.json
         else
-          echo "⚠️ No Falco events recorded (file missing or empty)."
+          echo "No Falco events recorded (file missing or empty)."
         fi
 
     - name: Stop Falco (live mode)
