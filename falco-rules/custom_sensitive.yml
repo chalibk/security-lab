@@ -7,3 +7,65 @@
     Suspicious read of /etc/shadow (user=%user.name pid=%proc.pid proc=%proc.name cmdline=%proc.cmdline fd=%fd.name container=%container.name container_id=%container.id)
   priority: CRITICAL
   tags: [suspicious, sensitive_file]
+
+  # --------------------------------------------------
+# 1. Unexpected shell execution in container
+# --------------------------------------------------
+
+- rule: Thesis - Unexpected Shell in Container
+  desc: Detect shell execution inside a container
+  condition: >
+    spawned_process and
+    container and
+    shell_procs
+  output: >
+    Thesis scenario - unexpected shell in container |
+    user=%user.name
+    container=%container.name
+    shell=%proc.name
+    parent=%proc.pname
+    command=%proc.cmdline
+  priority: WARNING
+
+
+# --------------------------------------------------
+# 2. Unexpected process execution in container
+# --------------------------------------------------
+
+- rule: Thesis - Unexpected Process in Container
+  desc: Detect execution of a selected unexpected process
+  condition: >
+    spawned_process and
+    container and
+    proc.name in (curl, wget, nc, ncat)
+  output: >
+    Thesis scenario - unexpected process in container |
+    user=%user.name
+    container=%container.name
+    process=%proc.name
+    parent=%proc.pname
+    command=%proc.cmdline
+  priority: WARNING
+
+
+# --------------------------------------------------
+# 3. Suspicious network connection
+# --------------------------------------------------
+
+- rule: Thesis - Suspicious Outbound Connection
+  desc: Detect outbound network connections from a container
+  condition: >
+    container and
+    evt.type=connect and
+    (fd.typechar=4 or fd.typechar=6)
+  output: >
+    Thesis scenario - suspicious network connection |
+    user=%user.name
+    container=%container.name
+    process=%proc.name
+    connection=%fd.name
+    lport=%fd.lport
+    rport=%fd.rport
+    fd_type=%fd.type
+    fd_proto=%fd.l4proto
+  priority: WARNING
