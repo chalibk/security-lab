@@ -37,7 +37,7 @@ jobs:
             cat /etc/shadow || true
 
       - name: Wait for Falco to capture alerts
-        run: sleep 10
+        run: sleep 30
 
       - name: Inspect Falco container logs
         run: |
