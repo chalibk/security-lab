@@ -1,0 +1,66 @@
+```yaml
+name: NGINX Container Security Test
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  security-test:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1. Get the source code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Build the NGINX container image
+      - name: Build NGINX image
+        run: |
+          docker build -t test-nginx:1.0 .
+
+      # 3. Scan the container image with Trivy
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'test-nginx:1.0'
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+
+      # 4. Run the NGINX container
+      - name: Start NGINX container
+        run: |
+          docker run -d \
+            --name test-nginx \
+            -p 8080:80 \
+            test-nginx:1.0
+
+      # 5. Test normal NGINX operation
+      - name: Test NGINX
+        run: |
+          sleep 5
+          curl http://localhost:8080
+
+      # 6. Runtime activity for Falco monitoring
+      - name: Generate runtime test activity
+        run: |
+          docker exec test-nginx sh -c "echo 'Falco runtime test'"
+
+      # 7. Show container status
+      - name: Show NGINX container
+        run: |
+          docker ps
+          docker logs test-nginx
+
+      # 8. Clean up
+      - name: Stop NGINX
+        if: always()
+        run: |
+          docker stop test-nginx || true
+          docker rm test-nginx || true
+```
+
