@@ -1,9 +1,7 @@
+
 name: Trivy Security Scan for NGINX
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -25,12 +23,11 @@ jobs:
 
       - name: Set scan timestamp
         shell: bash
-        run: echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
+        run: |
+          echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
 
       - name: Install Trivy
         shell: bash
-        env:
-          TRIVY_VERSION: "0.57.0"
         run: |
           set -euo pipefail
 
@@ -38,13 +35,13 @@ jobs:
             -o install-trivy.sh
 
           sudo sh install-trivy.sh -d -b /usr/local/bin "v${TRIVY_VERSION}"
-
           trivy --version
 
-      - name: Pull image and record immutable digest
+      - name: Pull NGINX image and resolve digest
         shell: bash
         run: |
           set -euo pipefail
+
           docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
           IMAGE_REF="$(docker image inspect \
@@ -52,31 +49,37 @@ jobs:
             "${IMAGE_NAME}:${IMAGE_TAG}")"
 
           if [[ -z "$IMAGE_REF" || "$IMAGE_REF" != *@sha256:* ]]; then
-            echo "Could not resolve an immutable image digest." >&2
+            echo "ERROR: Could not resolve image digest." >&2
             exit 1
           fi
 
           echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+
           mkdir -p security-lab/Trivy_Automation
+
           {
-            echo "Image tag: ${IMAGE_NAME}:${IMAGE_TAG}"
-            echo "Resolved image: ${IMAGE_REF}"
-            echo "Scan timestamp (UTC): ${SCAN_TIMESTAMP}"
+            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Immutable image reference: ${IMAGE_REF}"
+            echo "Scan timestamp UTC: ${SCAN_TIMESTAMP}"
             echo "Trivy version:"
             trivy --version
           } > "security-lab/Trivy_Automation/metadata-${SCAN_TIMESTAMP}.txt"
 
-          echo "Scanning immutable reference: $IMAGE_REF"
+          echo "Image resolved successfully: $IMAGE_REF"
 
       - name: Update Trivy vulnerability database
         shell: bash
-        run: trivy image --download-db-only
+        run: |
+          set -euo pipefail
+          trivy image --download-db-only
 
-      - name: Run Trivy scan and save JSON report
+      - name: Generate JSON vulnerability report
         shell: bash
         run: |
           set -euo pipefail
+
           trivy image \
+            --skip-db-update \
             --scanners vuln \
             --vuln-type os,library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
@@ -85,11 +88,13 @@ jobs:
             --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.json" \
             "$IMAGE_REF"
 
-      - name: Create human-readable vulnerability report
+      - name: Generate readable vulnerability report
         shell: bash
         run: |
           set -euo pipefail
+
           trivy image \
+            --skip-db-update \
             --scanners vuln \
             --vuln-type os,library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
@@ -98,19 +103,35 @@ jobs:
             --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt" \
             "$IMAGE_REF"
 
+          cat "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt"
+
+      - name: Enforce HIGH/CRITICAL vulnerability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          trivy image \
+            --skip-db-update \
+            --scanners vuln \
+            --vuln-type os,library \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --no-progress \
+            "$IMAGE_REF"
+
       - name: Add scan details to workflow summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Trivy container image scan"
+            echo "## Trivy NGINX Image Scan"
             echo
-            echo "- Image requested: \`${IMAGE_NAME}:${IMAGE_TAG}\`"
-            echo "- Resolved digest reference: \`${IMAGE_REF:-not resolved}\`"
+            echo "- Image: \`${IMAGE_NAME}:${IMAGE_TAG}\`"
+            echo "- Image digest: \`${IMAGE_REF:-not resolved}\`"
             echo "- Trivy version: \`${TRIVY_VERSION}\`"
-            echo "- Scan timestamp (UTC): \`${SCAN_TIMESTAMP}\`"
-            echo "- Full JSON and text reports are uploaded as workflow artifacts."
-            echo "- The security gate checks for HIGH and CRITICAL vulnerabilities."
+            echo "- Scan time (UTC): \`${SCAN_TIMESTAMP}\`"
+            echo "- Policy: fail on HIGH or CRITICAL vulnerabilities"
+            echo "- JSON and text reports are uploaded as artifacts."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload scan reports
@@ -121,11 +142,3 @@ jobs:
           path: security-lab/Trivy_Automation/
           if-no-files-found: warn
           retention-days: 90
-
-      - name: Enforce HIGH/CRITICAL vulnerability gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          trivy image \
-            --scanners vuln \
-            --vuln-type os,library \
