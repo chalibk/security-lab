@@ -33,7 +33,7 @@ jobs:
         run: |
           docker run --rm \
             -v /etc/shadow:/etc/shadow:ro \
-            ubuntu:latest \
+            nginx:latest \
             cat /etc/shadow || true
 
       - name: Wait for Falco to capture alerts
