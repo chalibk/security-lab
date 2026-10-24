@@ -59,6 +59,7 @@ jobs:
           echo "Scanning immutable reference: $IMAGE_REF"
 
       - name: Update Trivy vulnerability database
+        shell: bash
         run: |
           docker run --rm \
             -v "$HOME/.cache/trivy:/root/.cache/" \
