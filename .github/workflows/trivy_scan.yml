@@ -29,15 +29,16 @@ jobs:
 
       - name: Install Trivy
         shell: bash
-        env:
-          TRIVY_VERSION: "0.57.0"
         run: |
           set -euo pipefail
 
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            -o install-trivy.sh
+          TRIVY_VERSION="0.69.3"
+          curl -fL \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o trivy.tar.gz
 
-          sudo sh install-trivy.sh -d -b /usr/local/bin "v${TRIVY_VERSION}"
+          tar -xzf trivy.tar.gz trivy
+          sudo install trivy /usr/local/bin/trivy
 
           trivy --version
 
