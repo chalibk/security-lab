@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -32,10 +29,16 @@ jobs:
 
       - name: Install Trivy
         shell: bash
+        env:
+          TRIVY_VERSION: "0.57.0"
         run: |
           set -euo pipefail
+
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
+            -o install-trivy.sh
+
+          sudo sh install-trivy.sh -b /usr/local/bin "v${TRIVY_VERSION}"
+
           trivy --version
 
       - name: Pull image and record immutable digest
