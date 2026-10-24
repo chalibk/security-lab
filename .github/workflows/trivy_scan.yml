@@ -37,7 +37,7 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             -o install-trivy.sh
 
-          sudo sh install-trivy.sh -b /usr/local/bin "v${TRIVY_VERSION}"
+          sudo sh install-trivy.sh -d -b /usr/local/bin "v${TRIVY_VERSION}"
 
           trivy --version
 
