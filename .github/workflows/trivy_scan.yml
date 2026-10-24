@@ -28,21 +28,8 @@ jobs:
         shell: bash
         run: echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
 
-      - name: Install Trivy
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          VERSION="${TRIVY_VERSION#v}"
-          DOWNLOAD_URL="https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.tar.gz"
-
-          echo "Downloading Trivy ${VERSION} from ${DOWNLOAD_URL}"
-          curl -fL "$DOWNLOAD_URL" -o /tmp/trivy.tar.gz
-
-          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
-          sudo install /tmp/trivy /usr/local/bin/trivy
-
-          trivy --version
+      - name: Verify Trivy
+        run: docker run --rm aquasec/trivy:0.57.0 --version
 
       - name: Pull image and record immutable digest
         shell: bash
@@ -79,13 +66,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trivy image \
+          mkdir -p security-lab/Trivy_Automation
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/" \
+            -v "$PWD/security-lab/Trivy_Automation:/reports" \
+            aquasec/trivy:0.57.0 image \
             --scanners vuln \
-            --pkg-types os,library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
             --format json \
             --exit-code 0 \
-            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.json" \
+            --output "/reports/scan-results-${SCAN_TIMESTAMP}.json" \
             "$IMAGE_REF"
 
       - name: Create human-readable vulnerability report
