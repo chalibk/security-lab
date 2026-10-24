@@ -59,8 +59,10 @@ jobs:
           echo "Scanning immutable reference: $IMAGE_REF"
 
       - name: Update Trivy vulnerability database
-        shell: bash
-        run: trivy image --download-db-only
+        run: |
+          docker run --rm \
+            -v "$HOME/.cache/trivy:/root/.cache/" \
+            aquasec/trivy:0.57.0 image --download-db-only
 
       - name: Run Trivy scan and save JSON report
         shell: bash
@@ -121,9 +123,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trivy image \
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/" \
+            aquasec/trivy:0.57.0 image \
             --scanners vuln \
-            --pkg-types os,library \
             --severity HIGH,CRITICAL \
             --exit-code 1 \
             "$IMAGE_REF"
