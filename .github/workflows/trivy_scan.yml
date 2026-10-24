@@ -43,6 +43,16 @@ jobs:
           format: table
           output: trivy-results.txt
 
+      - name: Measure Performance Metrics
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $PWD:/work \
+            aquasec/trivy:latest \
+            sh -c "/usr/bin/time -v trivy image nginx:latest \
+            > /work/trivy-performance-scan.txt \
+            2> /work/trivy-performance.txt"
+
       - name: Upload Trivy Reports
         uses: actions/upload-artifact@v4
         with:
@@ -50,6 +60,8 @@ jobs:
           path: |
             trivy-results.json
             trivy-results.txt
+            trivy-performance.txt
+            trivy-performance-scan.txt
 
       - name: Enforce Security Gate
         uses: aquasecurity/trivy-action@master
@@ -67,4 +79,5 @@ jobs:
             echo "- Image: nginx:latest"
             echo "- Security Gate: HIGH, CRITICAL"
             echo "- Reports uploaded as workflow artifacts"
+            echo "- Performance metrics collected"
           } >> $GITHUB_STEP_SUMMARY
