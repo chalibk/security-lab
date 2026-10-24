@@ -43,15 +43,19 @@ jobs:
           format: table
           output: trivy-results.txt
 
-      - name: Measure Performance Metrics
+      - name: Install Trivy CLI
         run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v $PWD:/work \
-            aquasec/trivy:latest \
-            sh -c "/usr/bin/time -v trivy image nginx:latest \
-            > /work/trivy-performance-scan.txt \
-            2> /work/trivy-performance.txt"
+          sudo apt-get update
+          sudo apt-get install -y wget
+          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.67.2_Linux-64bit.deb
+          sudo dpkg -i trivy_0.67.2_Linux-64bit.deb
+
+      - name: Measure Scan Time CPU and Memory
+        run: |
+          /usr/bin/time -v \
+          trivy image nginx:latest \
+          > trivy-performance-scan.txt \
+          2> trivy-performance.txt
 
       - name: Upload Trivy Reports
         uses: actions/upload-artifact@v4
