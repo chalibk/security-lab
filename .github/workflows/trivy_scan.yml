@@ -45,25 +45,20 @@ jobs:
 
       - name: Install Trivy CLI
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget
-          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.67.2_Linux-64bit.deb
-          sudo dpkg -i trivy_0.67.2_Linux-64bit.deb
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
 
-      - name: Measure Scan Time CPU and Memory
+      - name: Collect Performance Metrics
         run: |
           /usr/bin/time -v \
           trivy image nginx:latest \
           > trivy-performance-scan.txt \
           2> trivy-performance.txt
 
-      - name: Upload Trivy Reports
+      - name: Upload Metrics
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-nginx-report
+          name: trivy-performance
           path: |
-            trivy-results.json
-            trivy-results.txt
             trivy-performance.txt
             trivy-performance-scan.txt
 
