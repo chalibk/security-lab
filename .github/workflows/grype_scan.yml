@@ -1,0 +1,32 @@
+name: Grype Security Scan
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  grype:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t my-app .
+
+      - name: Run Grype Scan
+        uses: anchore/scan-action@v3
+        with:
+          image: "my-app"
+          fail-build: false
+          severity-cutoff: high
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-results
+          path: ${{ github.workspace }}/results.sarif
