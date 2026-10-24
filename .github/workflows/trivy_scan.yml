@@ -1,47 +1,42 @@
+on:
+  workflow_dispatch:
 
-      - name: Generate JSON vulnerability report
-        shell: bash
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.69.3"
         run: |
-          set -euo pipefail
-          mkdir -p security-lab/Trivy_Automation
+          curl -fL \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o /tmp/trivy.tar.gz
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install /tmp/trivy /usr/local/bin/trivy
+          trivy --version
 
-          trivy image \
-            --skip-db-update \
-            --scanners vuln \
-            --pkg-types os,library \
-            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-            --format json \
-            --exit-code 0 \
-            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.json" \
-            "${IMAGE_NAME}:${IMAGE_TAG}"
+      - name: Pull NGINX image
+        run: docker pull nginx:latest
 
-      - name: Generate readable vulnerability report
-        shell: bash
+      - name: Scan NGINX image
         run: |
-          set -euo pipefail
-
           trivy image \
-            --skip-db-update \
             --scanners vuln \
             --pkg-types os,library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
             --format table \
             --exit-code 0 \
-            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt" \
-            "${IMAGE_NAME}:${IMAGE_TAG}"
+            nginx:latest
 
-          cat "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt"
-
-      - name: Enforce HIGH/CRITICAL vulnerability gate
-        shell: bash
+      - name: Fail if HIGH or CRITICAL vulnerabilities are found
         run: |
-          set -euo pipefail
-
           trivy image \
-            --skip-db-update \
             --scanners vuln \
             --pkg-types os,library \
             --severity HIGH,CRITICAL \
             --exit-code 1 \
-            --no-progress \
-            "${IMAGE_NAME}:${IMAGE_TAG}"
+            nginx:latest
