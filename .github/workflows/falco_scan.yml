@@ -49,7 +49,7 @@ jobs:
 
       - name: Wait For Detection
         run: |
-          sleep 20
+          sleep 30
 
       - name: Collect Performance Metrics
         run: |
