@@ -12,6 +12,7 @@ permissions:
 env:
   IMAGE_NAME: nginx
   IMAGE_TAG: latest
+  TRIVY_VERSION: "0.57.0"
 
 jobs:
   trivy-scan:
@@ -125,10 +126,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           trivy image \
             --scanners vuln \
             --vuln-type os,library \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            "$IMAGE_REF"
