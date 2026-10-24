@@ -86,13 +86,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trivy image \
+          mkdir -p security-lab/Trivy_Automation
+
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$HOME/.cache/trivy:/root/.cache/" \
+            -v "$PWD/security-lab/Trivy_Automation:/reports" \
+            aquasec/trivy:0.57.0 image \
             --scanners vuln \
-            --vuln-type os,library \
+            --pkg-types os,library \
             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
             --format table \
             --exit-code 0 \
-            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt" \
+            --output "/reports/scan-results-${SCAN_TIMESTAMP}.txt" \
             "$IMAGE_REF"
 
       - name: Add scan details to workflow summary
