@@ -1,0 +1,72 @@
+name: Falco Runtime Monitoring
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  falco-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pull NGINX Image
+        run: |
+          docker pull nginx:latest
+
+      - name: Start NGINX Container
+        run: |
+          docker run -d --name nginx-test nginx:latest
+
+      - name: Install Falco
+        run: |
+          curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | \
+          sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+
+          echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | \
+          sudo tee /etc/apt/sources.list.d/falcosecurity.list
+
+          sudo apt-get update
+          sudo apt-get install -y falco
+
+      - name: Start Falco
+        run: |
+          sudo timeout 60s falco -A > falco.log 2>&1 &
+          sleep 15
+
+      - name: Simulate Attack - Read Shadow File
+        run: |
+          docker exec nginx-test cat /etc/shadow || true
+
+      - name: Simulate Attack - Write Under Etc
+        run: |
+          docker exec nginx-test sh -c "touch /etc/malicious" || true
+
+      - name: Simulate Attack - Shell Access
+        run: |
+          docker exec nginx-test sh -c "id" || true
+
+      - name: Wait For Detection
+        run: |
+          sleep 20
+
+      - name: Collect Performance Metrics
+        run: |
+          ps aux | grep falco > falco-process.txt
+          free -m > falco-memory.txt
+
+      - name: Upload Falco Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: falco-results
+          path: |
+            falco.log
+            falco-process.txt
+            falco-memory.txt
+
+      - name: Stop Container
+        if: always()
+        run: |
+          docker stop nginx-test || true
+          docker rm nginx-test || true
