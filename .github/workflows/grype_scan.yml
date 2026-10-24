@@ -1,32 +1,81 @@
+
 name: Grype Scan NGINX
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: nginx
+  IMAGE_TAG: latest
 
 jobs:
   grype-scan:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Timestamp
+        run: |
+          echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> $GITHUB_ENV
+
       - name: Pull NGINX Image
         run: |
-          docker pull nginx:latest
+          docker pull ${IMAGE_NAME}:${IMAGE_TAG}
 
       - name: Install Grype
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | \
+          sudo sh -s -- -b /usr/local/bin
 
-      - name: Update Grype Database
+      - name: Verify Grype Installation
+        run: |
+          grype version
+
+      - name: Update Vulnerability Database
         run: |
           grype db update
 
-      - name: Scan NGINX Image
+      - name: Measure Performance and Run Grype Scan
         run: |
-          grype nginx:latest -o table > grype-nginx-report.txt
-          cat grype-nginx-report.txt
+          /usr/bin/time -v \
+          grype nginx:latest -o table \
+          > grype-results.txt \
+          2> grype-performance.txt
 
-      - name: Upload Report
+      - name: Run Grype JSON Scan
+        run: |
+          grype nginx:latest -o json > grype-results.json
+
+      - name: Upload Grype Reports
         uses: actions/upload-artifact@v4
         with:
           name: grype-nginx-report
-          path: grype-nginx-report.txt
+          path: |
+            grype-results.txt
+            grype-results.json
+            grype-performance.txt
+
+      - name: Security Gate
+        run: |
+          grype nginx:latest \
+          --fail-on high
+
+      - name: Workflow Summary
+        if: always()
+        run: |
+          {
+            echo "## Grype Scan Results"
+            echo ""
+            echo "- Image: nginx:latest"
+            echo "- Security Gate: HIGH"
+            echo "- Reports uploaded as artifacts"
+            echo "- Performance metrics collected"
+          } >> $GITHUB_STEP_SUMMARY
