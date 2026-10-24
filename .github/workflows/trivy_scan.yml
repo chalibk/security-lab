@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+            | sudo sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
           trivy --version
 
       - name: Pull image and record immutable digest
