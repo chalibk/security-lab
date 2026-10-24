@@ -32,8 +32,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
+
+          VERSION="${TRIVY_VERSION#v}"
+          DOWNLOAD_URL="https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.tar.gz"
+
+          echo "Downloading Trivy ${VERSION} from ${DOWNLOAD_URL}"
+          curl -fL "$DOWNLOAD_URL" -o /tmp/trivy.tar.gz
+
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install /tmp/trivy /usr/local/bin/trivy
+
           trivy --version
 
       - name: Pull image and record immutable digest
