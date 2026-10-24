@@ -126,6 +126,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           trivy image \
             --scanners vuln \
             --vuln-type os,library \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            "$IMAGE_REF"
