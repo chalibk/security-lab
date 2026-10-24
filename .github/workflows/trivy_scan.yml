@@ -1,8 +1,5 @@
 name: Trivy Security Scan for NGINX
 
-
-#condition
-
 on:
   push:
     branches:
@@ -10,53 +7,122 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: nginx
+  IMAGE_TAG: latest
+  TRIVY_VERSION: "0.57.0"
 
 jobs:
-  build:
-    name: Scan nginx:latest with Trivy
+  trivy-scan:
+    name: Scan NGINX image with Trivy
     runs-on: ubuntu-latest
-    permissions:
-      contents: write 
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set Date
-        id: set-date
-        run: echo "DATE=$(date +%m.%d.%Y)" >> $GITHUB_ENV
-
-      - name: Create output directory
-        run: mkdir -p "security-lab/Trivy_Automation"
+      - name: Set scan timestamp
+        shell: bash
+        run: echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
 
       - name: Install Trivy
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.57.0
+          set -euo pipefail
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
+          trivy --version
 
-      - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Pull image and record immutable digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
 
-      - name: Download Trivy vulnerability database
+          IMAGE_REF="$(docker image inspect \
+            --format='{{index .RepoDigests 0}}' \
+            "${IMAGE_NAME}:${IMAGE_TAG}")"
+
+          if [[ -z "$IMAGE_REF" || "$IMAGE_REF" != *@sha256:* ]]; then
+            echo "Could not resolve an immutable image digest." >&2
+            exit 1
+          fi
+
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+          mkdir -p security-lab/Trivy_Automation
+          {
+            echo "Image tag: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Resolved image: ${IMAGE_REF}"
+            echo "Scan timestamp (UTC): ${SCAN_TIMESTAMP}"
+            echo "Trivy version:"
+            trivy --version
+          } > "security-lab/Trivy_Automation/metadata-${SCAN_TIMESTAMP}.txt"
+
+          echo "Scanning immutable reference: $IMAGE_REF"
+
+      - name: Update Trivy vulnerability database
+        shell: bash
         run: trivy image --download-db-only
 
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy scan and save JSON report
+        shell: bash
         run: |
-          OUTPUT_FILE="security-lab/Trivy_Automation/scan-results-${DATE}.json"
-          mkdir -p "security-lab/Trivy_Automation"
-          trivy image --format json --vuln-type os,library --severity CRITICAL,HIGH,MEDIUM,LOW -o "$OUTPUT_FILE" nginx:latest
+          set -euo pipefail
+          trivy image \
+            --scanners vuln \
+            --vuln-type os,library \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --format json \
+            --exit-code 0 \
+            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.json" \
+            "$IMAGE_REF"
 
-
-      - name: Verify scan results exist
-        run: ls -l "security-lab/Trivy_Automation/"
-
-      - name: Commit scan results to repository
-        env:
-          GITHUB_TOKEN: ${{ secrets.mytoken }}
+      - name: Create human-readable vulnerability report
+        shell: bash
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add "security-lab/Trivy_Automation/scan-results-${DATE}.json"
-          git commit -m "Add Trivy scan results (${DATE})"
-          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
+          set -euo pipefail
+          trivy image \
+            --scanners vuln \
+            --vuln-type os,library \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --format table \
+            --exit-code 0 \
+            --output "security-lab/Trivy_Automation/scan-results-${SCAN_TIMESTAMP}.txt" \
+            "$IMAGE_REF"
+
+      - name: Add scan details to workflow summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Trivy container image scan"
+            echo
+            echo "- Image requested: \`${IMAGE_NAME}:${IMAGE_TAG}\`"
+            echo "- Resolved digest reference: \`${IMAGE_REF:-not resolved}\`"
+            echo "- Trivy version: \`${TRIVY_VERSION}\`"
+            echo "- Scan timestamp (UTC): \`${SCAN_TIMESTAMP}\`"
+            echo "- Full JSON and text reports are uploaded as workflow artifacts."
+            echo "- The security gate checks for HIGH and CRITICAL vulnerabilities."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-nginx-scan-${{ env.SCAN_TIMESTAMP }}
+          path: security-lab/Trivy_Automation/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Enforce HIGH/CRITICAL vulnerability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image \
+            --scanners vuln \
+            --vuln-type os,library \
