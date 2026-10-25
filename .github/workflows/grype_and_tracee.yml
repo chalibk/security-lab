@@ -20,24 +20,23 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Install Grype CLI
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+
       - name: Run Grype Vulnerability Scan
-        uses: anchore/grype-action@v0
-        with:
-          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-          output-format: json
-          file-output: "grype-results.json"
+        run: |
+          grype ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o json > grype-results.json
+          grype ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o table > grype-results.txt
+          cat grype-results.txt
 
-      - name: Run Grype Table Output (Report Only)
-        uses: anchore/grype-action@v0
-        with:
-          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
-          output-format: table
-
-      - name: Upload Grype Report
+      - name: Upload Grype Reports
         uses: actions/upload-artifact@v4
         with:
           name: grype-security-report
-          path: grype-results.json
+          path: |
+            grype-results.json
+            grype-results.txt
 
   tracee-runtime-test:
     needs: grype-scan
@@ -52,8 +51,7 @@ jobs:
           docker pull aquasec/tracee:latest
           docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-          echo "Starting Tracee in the background (e.g. tracking file opens and execution)..."
-          # Tracee uses eBPF to trace host kernel syscalls directly
+          echo "Starting Tracee in the background..."
           docker run -d --name tracee --privileged \
             -v /lib/modules:/lib/modules:ro \
             -v /usr/src:/usr/src:ro \
@@ -62,14 +60,13 @@ jobs:
             --output json \
             --trace event=security_file_open,execve > tracee-container.log 2>&1 || true
 
-          # Give Tracee a few seconds to initialize its eBPF probes
+          # Give Tracee a few seconds to initialize eBPF probes
           sleep 5
 
           echo "Deploying test container..."
           docker run -d --name nginx-runtime-test ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
           echo "Simulating a runtime action inside the container..."
-          # Executing a command that triggers syscalls monitored by Tracee
           docker exec nginx-runtime-test sh -c "cat /etc/shadow || true"
 
           # Allow Tracee time to flush captured events
@@ -77,9 +74,6 @@ jobs:
 
           echo "Capturing Tracee runtime event logs..."
           docker logs tracee > tracee-results.txt || true
-          
-          # Display filtered results in the CI output
-          grep -i "shadow" tracee-results.txt || echo "Checking full event log..."
           tail -n 50 tracee-results.txt
 
       - name: Upload Tracee Artifacts
