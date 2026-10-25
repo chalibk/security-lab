@@ -81,8 +81,10 @@ jobs:
 
       - name: Simulate Runtime Action & Verify Falco
         run: |
+          echo "Waiting for Falco pod to be fully ready..."
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=falco --timeout=90s
+
           echo "Simulating a runtime action inside the NGINX container..."
-          # Running a command inside the container to test Falco's rule engine (e.g., spawning a shell or reading sensitive system paths)
           kubectl exec nginx-runtime-test -- sh -c "cat /etc/shadow || true"
           
           # Allow Falco a few seconds to process and flush system call logs
