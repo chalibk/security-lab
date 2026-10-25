@@ -66,13 +66,12 @@ jobs:
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Install Falco via Helm
+      - name: Install Falco via Helm    
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
           helm repo update
-          # Using modern-ebpf driver which works seamlessly in CI runners
           helm install falco falcosecurity/falco \
-            --set driver.kind=modern-ebpf \
+            --set driver.kind=modern_ebpf \
             --wait
 
       - name: Deploy NGINX Test Pod
