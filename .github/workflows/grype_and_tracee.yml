@@ -1,0 +1,89 @@
+name: Container Security Comparison (Grype & Tracee)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: nginx
+  IMAGE_TAG: latest
+
+jobs:
+  grype-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Grype Vulnerability Scan
+        uses: anchore/grype-action@v0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          output-format: json
+          file-output: "grype-results.json"
+
+      - name: Run Grype Table Output (Report Only)
+        uses: anchore/grype-action@v0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          output-format: table
+
+      - name: Upload Grype Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: grype-security-report
+          path: grype-results.json
+
+  tracee-runtime-test:
+    needs: grype-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up and Run Tracee Runtime Monitor
+        run: |
+          echo "Pulling container images..."
+          docker pull aquasec/tracee:latest
+          docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+          echo "Starting Tracee in the background (e.g. tracking file opens and execution)..."
+          # Tracee uses eBPF to trace host kernel syscalls directly
+          docker run -d --name tracee --privileged \
+            -v /lib/modules:/lib/modules:ro \
+            -v /usr/src:/usr/src:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/tracee:latest \
+            --output json \
+            --trace event=security_file_open,execve > tracee-container.log 2>&1 || true
+
+          # Give Tracee a few seconds to initialize its eBPF probes
+          sleep 5
+
+          echo "Deploying test container..."
+          docker run -d --name nginx-runtime-test ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+          echo "Simulating a runtime action inside the container..."
+          # Executing a command that triggers syscalls monitored by Tracee
+          docker exec nginx-runtime-test sh -c "cat /etc/shadow || true"
+
+          # Allow Tracee time to flush captured events
+          sleep 5
+
+          echo "Capturing Tracee runtime event logs..."
+          docker logs tracee > tracee-results.txt || true
+          
+          # Display filtered results in the CI output
+          grep -i "shadow" tracee-results.txt || echo "Checking full event log..."
+          tail -n 50 tracee-results.txt
+
+      - name: Upload Tracee Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracee-runtime-logs
+          path: tracee-results.txt
