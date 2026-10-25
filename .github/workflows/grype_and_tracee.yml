@@ -52,7 +52,7 @@ jobs:
           docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
           echo "Starting Tracee in the background..."
-          # Added the missing /etc/os-release bind mount and env variable
+          # Fixed: Removed the deprecated --trace flag
           docker run -d --name tracee --privileged \
             -v /lib/modules:/lib/modules:ro \
             -v /usr/src:/usr/src:ro \
@@ -60,8 +60,7 @@ jobs:
             -v /etc/os-release:/etc/os-release-host:ro \
             -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host \
             aquasec/tracee:latest \
-            --output json \
-            --trace event=security_file_open,execve > tracee-container.log 2>&1 || true
+            --output json > tracee-container.log 2>&1 || true
 
           # Give Tracee time to initialize eBPF probes
           sleep 10
@@ -78,9 +77,3 @@ jobs:
           echo "Capturing Tracee runtime event logs..."
           docker logs tracee > tracee-results.txt || true
           tail -n 50 tracee-results.txt
-
-      - name: Upload Tracee Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: tracee-runtime-logs
-          path: tracee-results.txt
