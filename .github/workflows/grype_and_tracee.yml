@@ -52,7 +52,7 @@ jobs:
           docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
           echo "Starting Tracee in the background..."
-          # Fixed: Removed the deprecated --trace flag
+          # Fixed: Added --events to explicitly capture file opens and process executions
           docker run -d --name tracee --privileged \
             -v /lib/modules:/lib/modules:ro \
             -v /usr/src:/usr/src:ro \
@@ -60,7 +60,8 @@ jobs:
             -v /etc/os-release:/etc/os-release-host:ro \
             -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host \
             aquasec/tracee:latest \
-            --output json > tracee-container.log 2>&1 || true
+            --output json \
+            --events openat,execve > tracee-container.log 2>&1 || true
 
           # Give Tracee time to initialize eBPF probes
           sleep 10
@@ -76,4 +77,8 @@ jobs:
 
           echo "Capturing Tracee runtime event logs..."
           docker logs tracee > tracee-results.txt || true
+          
+          # Filter specifically for shadow or openat events in the workflow log
+          echo "Filtering results for shadow file access..."
+          grep -i "shadow" tracee-results.txt || echo "No shadow match found in tail, check full artifact."
           tail -n 50 tracee-results.txt
