@@ -97,6 +97,6 @@ jobs:
           {
             echo "## Security Pipeline Execution Summary"
             echo ""
-            echo "- **Static Analysis (Trivy):** Completed and passed security gates for `${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}`."
+            echo "- **Static Analysis (Trivy):** Successfully scanned \`${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}\` and generated reports (Gate set to Report-Only)."
             echo "- **Runtime Monitoring (Falco):** Deployed in KinD cluster, tested against live NGINX container actions, and captured logs."
           } >> $GITHUB_STEP_SUMMARY
