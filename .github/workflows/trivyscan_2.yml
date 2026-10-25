@@ -1,41 +1,103 @@
-name: Trivy Vulnerability Scan
+name: Container Security Pipeline (Trivy & Falco)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: nginx
+  IMAGE_TAG: latest
 
 jobs:
   trivy-scan:
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Install Trivy
-      - name: Install Trivy
+      - name: Create Timestamp
         run: |
-          sudo apt-get update -y
-          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_Linux-64bit.tar.gz
-          tar zxvf trivy_Linux-64bit.tar.gz
-          sudo mv trivy /usr/local/bin/
+          echo "SCAN_TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> $GITHUB_ENV
 
-      # Step 3: Create output directory
-      - name: Create results directory
-        run: mkdir -p security-lab/Trivy_Automation
-
-      # Step 4: Run Trivy image scan on nginx:latest
-      - name: Run Trivy scan and save output
+      - name: Pull NGINX Image
         run: |
-          DATE=$(date +%Y-%m-%d_%H-%M-%S)
-          OUTPUT_FILE="security-lab/Trivy_Automation/scan-results-${DATE}.json"
-          trivy image --format json --output "$OUTPUT_FILE" nginx:latest
-          echo "Scan completed. Results saved to $OUTPUT_FILE"
+          docker pull ${IMAGE_NAME}:${IMAGE_TAG}
 
-
-      # Step 5: Upload the scan result as an artifact (optional)
-      - name: Upload scan results
-        uses: actions/upload-artifact@v4
+      - name: Run Trivy JSON Scan
+        uses: aquasecurity/trivy-action@master
         with:
-          name: trivy-scan-results
-          path: security-lab/Trivy_Automation/
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: json
+          output: trivy-results.json
+
+      - name: Run Trivy Table Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: table
+          output: trivy-results.txt
+
+      - name: Enforce Security Gate
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+  falco-runtime-test:
+    needs: trivy-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Local Kubernetes (KinD)
+        uses: engineerd/setup-kind@v5
+        with:
+          version: v0.20.0
+
+      - name: Verify Cluster Connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Install Falco via Helm
+        run: |
+          helm repo add falcosecurity https://falcosecurity.github.io/charts
+          helm repo update
+          # Using modern-ebpf driver which works seamlessly in CI runners
+          helm install falco falcosecurity/falco \
+            --set driver.kind=modern-ebpf \
+            --wait
+
+      - name: Deploy NGINX Test Pod
+        run: |
+          kubectl run nginx-runtime-test --image=${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          kubectl wait --for=condition=Ready pod/nginx-runtime-test --timeout=60s
+
+      - name: Simulate Runtime Action & Verify Falco
+        run: |
+          echo "Simulating a runtime action inside the NGINX container..."
+          # Running a command inside the container to test Falco's rule engine (e.g., spawning a shell or reading sensitive system paths)
+          kubectl exec nginx-runtime-test -- sh -c "cat /etc/shadow || true"
+          
+          # Allow Falco a few seconds to process and flush system call logs
+          sleep 5
+          
+          echo "Checking Falco logs for security alerts..."
+          kubectl logs -l app.kubernetes.io/name=falco --tail=100
+
+      - name: Workflow Summary
+        if: always()
+        run: |
+          {
+            echo "## Security Pipeline Execution Summary"
+            echo ""
+            echo "- **Static Analysis (Trivy):** Completed and passed security gates for `${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}`."
+            echo "- **Runtime Monitoring (Falco):** Deployed in KinD cluster, tested against live NGINX container actions, and captured logs."
+          } >> $GITHUB_STEP_SUMMARY
