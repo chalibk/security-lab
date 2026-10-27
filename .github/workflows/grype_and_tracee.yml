@@ -30,6 +30,11 @@ jobs:
           grype ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o table > grype-results.txt
           cat grype-results.txt
 
+      - name: Run Grype Scan & Count
+        run: |
+          grype nginx:latest -o json > grype-results.json
+          echo "--- Grype Summary ---"
+          jq '[.matches[].vulnerability.severity] | group_by(.) | map({severity: .[0], count: length})' grype-results.json
       - name: Upload Grype Reports
         uses: actions/upload-artifact@v4
         with:
