@@ -150,11 +150,10 @@ jobs:
       # ATTACK 2
       #################################################################
 
-      - name: Attack 2 - Read Kubernetes Token
-        continue-on-error: true
+      - name: Attack 2 - Write Sensitive File
         run: |
-          kubectl exec ${{ matrix.pod_name }} -- \
-            cat /var/run/secrets/kubernetes.io/serviceaccount/token
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "echo test >> /etc/passwd"
 
           sleep 10
 
@@ -162,10 +161,11 @@ jobs:
       # ATTACK 3
       #################################################################
 
-      - name: Attack 3 - Launch Shell
+      - name: Attack 3 - Execute Shell
         continue-on-error: true
         run: |
-          kubectl exec -it ${{ matrix.pod_name }} -- /bin/sh || true
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "echo shell-test"
 
           sleep 10
 
