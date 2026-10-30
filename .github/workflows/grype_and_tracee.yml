@@ -45,7 +45,7 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
           | sudo sh -s -- -b /usr/local/bin
 
-      - name: Start Timer
+      - name: Record Start Time
         run: |
           echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
 
@@ -63,10 +63,8 @@ jobs:
         run: |
           cat grype-results.txt
 
-      - name: Count Vulnerabilities
+      - name: Generate Vulnerability Summary
         run: |
-          echo "===== GRYPE SUMMARY ====="
-
           jq '
           [.matches[].vulnerability.severity]
           | group_by(.)
@@ -76,9 +74,10 @@ jobs:
             })
           ' grype-results.json > grype-summary.json
 
+          echo "===== GRYPE SUMMARY ====="
           cat grype-summary.json
 
-      - name: Calculate Scan Time
+      - name: Calculate Performance
         run: |
           END_TIME=$(date +%s)
 
@@ -134,7 +133,7 @@ jobs:
         uses: actions/checkout@v4
 
       #########################################################################
-      # INSTALL TRACEE
+      # SETUP
       #########################################################################
 
       - name: Pull Images
@@ -144,29 +143,27 @@ jobs:
 
       - name: Start Tracee
         run: |
-
           docker run -d \
             --name tracee \
             --privileged \
             --pid=host \
             --cgroupns=host \
-            -v /etc/os-release:/etc/os-release-host:ro \
-            -v /var/run/docker.sock:/var/run/docker.sock \
             -v /lib/modules:/lib/modules:ro \
             -v /usr/src:/usr/src:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /etc/os-release:/etc/os-release-host:ro \
             -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host \
             aquasec/tracee:latest \
-            --output table
+            --output json
 
           sleep 20
 
       #########################################################################
-      # TEST CONTAINER
+      # DEPLOY TEST CONTAINER
       #########################################################################
 
       - name: Deploy Test Container
         run: |
-
           docker run -d \
             --name ${{ matrix.container_name }} \
             ${{ matrix.image_name }}:${{ matrix.image_tag }} \
@@ -175,46 +172,43 @@ jobs:
           sleep 10
 
       #########################################################################
-      # ATTACK 1
+      # ATTACK 1 - READ SHADOW
       #########################################################################
 
-      - name: Attack 1 - Read Shadow File
+      - name: Attack 1 - Read Sensitive File
         continue-on-error: true
         run: |
-
           docker exec \
             ${{ matrix.container_name }} \
-            sh -c "cat /etc/shadow"
+            cat /etc/shadow
 
-          sleep 10
+          sleep 15
 
       #########################################################################
-      # ATTACK 2
+      # ATTACK 2 - MODIFY PASSWD
       #########################################################################
 
       - name: Attack 2 - Modify Passwd
         continue-on-error: true
         run: |
-
           docker exec \
             ${{ matrix.container_name }} \
             sh -c "echo thesis-test >> /etc/passwd"
 
-          sleep 10
+          sleep 15
 
       #########################################################################
-      # ATTACK 3
+      # ATTACK 3 - SPAWN SHELL
       #########################################################################
 
-      - name: Attack 3 - Execute Shell
+      - name: Attack 3 - Shell Execution
         continue-on-error: true
         run: |
-
           docker exec \
             ${{ matrix.container_name }} \
             sh -c "id"
 
-          sleep 10
+          sleep 15
 
       #########################################################################
       # BENIGN ACTIVITY
@@ -223,20 +217,18 @@ jobs:
       - name: Benign Activity
         continue-on-error: true
         run: |
-
           docker exec \
             ${{ matrix.container_name }} \
             touch /tmp/normal-file.txt
 
-          sleep 10
+          sleep 15
 
       #########################################################################
-      # COLLECT LOGS
+      # COLLECT RESULTS
       #########################################################################
 
       - name: Collect Tracee Logs
         run: |
-
           docker logs tracee > tracee.log 2>&1 || true
 
           echo "===== SHADOW EVENTS ====="
@@ -245,8 +237,8 @@ jobs:
           echo "===== PASSWD EVENTS ====="
           grep -i passwd tracee.log || true
 
-          echo "===== EXECVE EVENTS ====="
-          grep -i execve tracee.log || true
+          echo "===== SHELL EVENTS ====="
+          grep -iE "execve|bash|sh|id" tracee.log || true
 
           tail -n 200 tracee.log
 
