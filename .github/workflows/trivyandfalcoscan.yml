@@ -12,6 +12,7 @@ permissions:
 jobs:
 
   trivy-scan:
+
     strategy:
       matrix:
         include:
@@ -27,13 +28,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
 
       - name: Pull Image
         run: |
           docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
 
-      - name: Record Start Time
+      - name: Start Timer
         run: |
           echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
 
@@ -51,9 +53,14 @@ jobs:
           format: table
           output: trivy-results.txt
 
+      - name: Display Trivy Results
+        run: |
+          cat trivy-results.txt
+
       - name: Calculate Scan Time
         run: |
           END_TIME=$(date +%s)
+
           echo "Scan Time: $((END_TIME-START_TIME)) seconds" > performance.txt
 
           echo "" >> performance.txt
@@ -64,7 +71,7 @@ jobs:
           echo "MEMORY INFO" >> performance.txt
           free -m >> performance.txt
 
-      - name: Upload Trivy Artifacts
+      - name: Upload Trivy Results
         uses: actions/upload-artifact@v4
         with:
           name: trivy-${{ matrix.image_name }}
@@ -72,6 +79,8 @@ jobs:
             trivy-results.json
             trivy-results.txt
             performance.txt
+
+################################################################################
 
   falco-runtime-test:
 
@@ -103,6 +112,33 @@ jobs:
         with:
           version: v0.20.0
 
+      ######################################################################
+      # CUSTOM RULES
+      ######################################################################
+
+      - name: Create Custom Falco Rules
+        run: |
+          cat > custom-rules.yaml <<EOF
+
+          customRules:
+            custom-rules.yaml: |-
+
+              - rule: Detect Passwd Modification
+                desc: Detect passwd modifications
+                condition: open_write and fd.name=/etc/passwd
+                output: Passwd modification detected
+                priority: WARNING
+
+              - rule: Detect Shell Execution
+                desc: Detect shell execution
+                condition: spawned_process and container and proc.name in (sh,bash,dash)
+                output: Shell execution detected
+                priority: WARNING
+
+          EOF
+
+      ######################################################################
+
       - name: Install Falco
         run: |
           helm repo add falcosecurity https://falcosecurity.github.io/charts
@@ -110,6 +146,7 @@ jobs:
 
           helm install falco falcosecurity/falco \
             --set driver.kind=modern_ebpf \
+            -f custom-rules.yaml \
             --wait
 
       - name: Wait For Falco
@@ -119,6 +156,8 @@ jobs:
             pod \
             -l app.kubernetes.io/name=falco \
             --timeout=180s
+
+      ######################################################################
 
       - name: Deploy Test Pod
         run: |
@@ -131,65 +170,66 @@ jobs:
             pod/${{ matrix.pod_name }} \
             --timeout=120s
 
-      - name: Verify Pod Status
-        run: |
-          kubectl get pods -o wide
-          kubectl describe pod ${{ matrix.pod_name }}
-
-      #################################################################
+      ######################################################################
       # ATTACK 1
-      #################################################################
+      ######################################################################
 
       - name: Attack 1 - Read Sensitive File
         continue-on-error: true
         run: |
-          kubectl exec ${{ matrix.pod_name }} -- cat /etc/shadow
+          kubectl exec ${{ matrix.pod_name }} -- \
+            cat /etc/shadow
+
           sleep 10
 
-      #################################################################
+      ######################################################################
       # ATTACK 2
-      #################################################################
+      ######################################################################
 
-      - name: Attack 2 - Write Sensitive File
+      - name: Attack 2 - Modify Passwd
+        continue-on-error: true
         run: |
-          kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "echo test >> /etc/passwd"
+          kubectl exec ${{ matrix.pod_name }} -- \
+            sh -c "echo test >> /etc/passwd"
 
           sleep 10
 
-      #################################################################
+      ######################################################################
       # ATTACK 3
-      #################################################################
+      ######################################################################
 
       - name: Attack 3 - Execute Shell
         continue-on-error: true
         run: |
-          kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "echo shell-test"
+          kubectl exec ${{ matrix.pod_name }} -- \
+            sh -c "id"
 
           sleep 10
 
-      #################################################################
-      # BENIGN TEST
-      #################################################################
+      ######################################################################
+      # BENIGN ACTIVITY
+      ######################################################################
 
       - name: Benign Activity
         continue-on-error: true
         run: |
-          kubectl exec ${{ matrix.pod_name }} \
-            -- touch /tmp/normal-file.txt
+          kubectl exec ${{ matrix.pod_name }} -- \
+            touch /tmp/normal-file.txt
 
           sleep 10
 
-      #################################################################
-      # COLLECT LOGS
-      #################################################################
+      ######################################################################
+      # LOG COLLECTION
+      ######################################################################
 
-      - name: Collect Falco Logs
+      - name: Collect Falco Results
         run: |
           kubectl logs \
             -l app.kubernetes.io/name=falco \
-            --tail=2000 > falco.log
+            --tail=3000 > falco.log
+
+          echo "==== FALCO ALERTS ===="
+          grep -i "warning\|critical" falco.log || true
 
           cat falco.log
 
@@ -198,17 +238,3 @@ jobs:
         with:
           name: falco-${{ matrix.image_name }}
           path: falco.log
-
-      - name: Workflow Summary
-        if: always()
-        run: |
-          {
-            echo "## Falco Runtime Evaluation"
-            echo ""
-            echo "Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}"
-            echo ""
-            echo "- Read Sensitive File"
-            echo "- Permission Change"
-            echo "- Execute Shell"
-            echo "- Benign Activity"
-          } >> $GITHUB_STEP_SUMMARY
