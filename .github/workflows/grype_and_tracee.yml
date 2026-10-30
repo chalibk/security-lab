@@ -9,81 +9,249 @@ on:
 permissions:
   contents: read
 
-env:
-  IMAGE_NAME: nginx
-  IMAGE_TAG: latest
-
 jobs:
+
+###############################################################################
+# GRYPE SCAN
+###############################################################################
+
   grype-scan:
+
+    strategy:
+      matrix:
+        include:
+          - image_name: nginx
+            image_tag: latest
+
+          - image_name: redis
+            image_tag: latest
+
+          - image_name: ubuntu
+            image_tag: "22.04"
+
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Grype CLI
+      - name: Pull Image
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
+          docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
 
-      - name: Run Grype Vulnerability Scan
+      - name: Install Grype
         run: |
-          grype ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o json > grype-results.json
-          grype ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -o table > grype-results.txt
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+          | sudo sh -s -- -b /usr/local/bin
+
+      - name: Start Timer
+        run: |
+          echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Run Grype JSON Scan
+        run: |
+          grype ${{ matrix.image_name }}:${{ matrix.image_tag }} \
+            -o json > grype-results.json
+
+      - name: Run Grype Table Scan
+        run: |
+          grype ${{ matrix.image_name }}:${{ matrix.image_tag }} \
+            -o table > grype-results.txt
+
+      - name: Display Results
+        run: |
           cat grype-results.txt
 
-      - name: Run Grype Scan & Count
+      - name: Count Vulnerabilities
         run: |
-          grype nginx:latest -o json > grype-results.json
-          echo "--- Grype Summary ---"
-          jq '[.matches[].vulnerability.severity] | group_by(.) | map({severity: .[0], count: length})' grype-results.json
-      - name: Upload Grype Reports
+          echo "===== GRYPE SUMMARY ====="
+
+          jq '
+          [.matches[].vulnerability.severity]
+          | group_by(.)
+          | map({
+              severity: .[0],
+              count: length
+            })
+          ' grype-results.json > grype-summary.json
+
+          cat grype-summary.json
+
+      - name: Calculate Scan Time
+        run: |
+          END_TIME=$(date +%s)
+
+          echo "Scan Time: $((END_TIME-START_TIME)) seconds" \
+            > performance.txt
+
+          echo "" >> performance.txt
+          echo "CPU INFORMATION" >> performance.txt
+          lscpu >> performance.txt
+
+          echo "" >> performance.txt
+          echo "MEMORY INFORMATION" >> performance.txt
+          free -m >> performance.txt
+
+      - name: Upload Grype Results
         uses: actions/upload-artifact@v4
         with:
-          name: grype-security-report
+          name: grype-${{ matrix.image_name }}
           path: |
             grype-results.json
             grype-results.txt
+            grype-summary.json
+            performance.txt
+
+###############################################################################
+# TRACEE RUNTIME TESTS
+###############################################################################
 
   tracee-runtime-test:
+
     needs: grype-scan
+
+    strategy:
+      matrix:
+        include:
+          - image_name: nginx
+            image_tag: latest
+            container_name: nginx-tracee-test
+
+          - image_name: redis
+            image_tag: latest
+            container_name: redis-tracee-test
+
+          - image_name: ubuntu
+            image_tag: "22.04"
+            container_name: ubuntu-tracee-test
+
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up and Run Tracee Runtime Monitor
-        run: |
-          echo "Pulling container images..."
-          docker pull aquasec/tracee:latest
-          docker pull ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+      #########################################################################
+      # INSTALL TRACEE
+      #########################################################################
 
-          echo "Starting Tracee in the background..."
-          # Fixed: Added --events to explicitly capture file opens and process executions
-          docker run -d --name tracee --privileged \
+      - name: Pull Images
+        run: |
+          docker pull aquasec/tracee:latest
+          docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
+
+      - name: Start Tracee
+        run: |
+
+          docker run -d \
+            --name tracee \
+            --privileged \
+            --pid=host \
+            --cgroupns=host \
+            -v /etc/os-release:/etc/os-release-host:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -v /lib/modules:/lib/modules:ro \
             -v /usr/src:/usr/src:ro \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v /etc/os-release:/etc/os-release-host:ro \
             -e LIBBPFGO_OSRELEASE_FILE=/etc/os-release-host \
             aquasec/tracee:latest \
-            --output json \
-            --events openat,execve > tracee-container.log 2>&1 || true
+            --output table
 
-          # Give Tracee time to initialize eBPF probes
+          sleep 20
+
+      #########################################################################
+      # TEST CONTAINER
+      #########################################################################
+
+      - name: Deploy Test Container
+        run: |
+
+          docker run -d \
+            --name ${{ matrix.container_name }} \
+            ${{ matrix.image_name }}:${{ matrix.image_tag }} \
+            sleep 3600
+
           sleep 10
 
-          echo "Deploying test container..."
-          docker run -d --name nginx-runtime-test ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+      #########################################################################
+      # ATTACK 1
+      #########################################################################
 
-          echo "Simulating a runtime action inside the container..."
-          docker exec nginx-runtime-test sh -c "cat /etc/shadow || true"
+      - name: Attack 1 - Read Shadow File
+        continue-on-error: true
+        run: |
 
-          # Allow Tracee time to flush captured events
-          sleep 5
+          docker exec \
+            ${{ matrix.container_name }} \
+            sh -c "cat /etc/shadow"
 
-          echo "Capturing Tracee runtime event logs..."
-          docker logs tracee > tracee-results.txt || true
-          
-          # Filter specifically for shadow or openat events in the workflow log
-          echo "Filtering results for shadow file access..."
-          grep -i "shadow" tracee-results.txt || echo "No shadow match found in tail, check full artifact."
-          tail -n 50 tracee-results.txt
+          sleep 10
+
+      #########################################################################
+      # ATTACK 2
+      #########################################################################
+
+      - name: Attack 2 - Modify Passwd
+        continue-on-error: true
+        run: |
+
+          docker exec \
+            ${{ matrix.container_name }} \
+            sh -c "echo thesis-test >> /etc/passwd"
+
+          sleep 10
+
+      #########################################################################
+      # ATTACK 3
+      #########################################################################
+
+      - name: Attack 3 - Execute Shell
+        continue-on-error: true
+        run: |
+
+          docker exec \
+            ${{ matrix.container_name }} \
+            sh -c "id"
+
+          sleep 10
+
+      #########################################################################
+      # BENIGN ACTIVITY
+      #########################################################################
+
+      - name: Benign Activity
+        continue-on-error: true
+        run: |
+
+          docker exec \
+            ${{ matrix.container_name }} \
+            touch /tmp/normal-file.txt
+
+          sleep 10
+
+      #########################################################################
+      # COLLECT LOGS
+      #########################################################################
+
+      - name: Collect Tracee Logs
+        run: |
+
+          docker logs tracee > tracee.log 2>&1 || true
+
+          echo "===== SHADOW EVENTS ====="
+          grep -i shadow tracee.log || true
+
+          echo "===== PASSWD EVENTS ====="
+          grep -i passwd tracee.log || true
+
+          echo "===== EXECVE EVENTS ====="
+          grep -i execve tracee.log || true
+
+          tail -n 200 tracee.log
+
+      - name: Upload Tracee Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracee-${{ matrix.image_name }}
+          path: tracee.log
