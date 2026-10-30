@@ -12,7 +12,6 @@ permissions:
 jobs:
 
   trivy-scan:
-
     strategy:
       matrix:
         include:
@@ -28,23 +27,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Pull Container Image
+      - name: Pull Image
         run: |
           docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
 
-      - name: Collect Performance Information
-        run: |
-          echo "===== CPU INFO =====" > performance.txt
-          lscpu >> performance.txt
-
-          echo "" >> performance.txt
-          echo "===== MEMORY INFO =====" >> performance.txt
-          free -m >> performance.txt
-
-      - name: Start Scan Timer
+      - name: Record Start Time
         run: |
           echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
 
@@ -65,20 +54,17 @@ jobs:
       - name: Calculate Scan Time
         run: |
           END_TIME=$(date +%s)
-          SCAN_TIME=$((END_TIME-START_TIME))
+          echo "Scan Time: $((END_TIME-START_TIME)) seconds" > performance.txt
 
           echo "" >> performance.txt
-          echo "===== SCAN TIME =====" >> performance.txt
-          echo "Trivy Scan Time: ${SCAN_TIME} seconds" >> performance.txt
+          echo "CPU INFO" >> performance.txt
+          lscpu >> performance.txt
 
-      - name: Security Gate
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
-          severity: HIGH,CRITICAL
-          exit-code: 0
+          echo "" >> performance.txt
+          echo "MEMORY INFO" >> performance.txt
+          free -m >> performance.txt
 
-      - name: Upload Trivy Results
+      - name: Upload Trivy Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: trivy-${{ matrix.image_name }}
@@ -109,18 +95,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
 
-      - name: Create KinD Cluster
+      - uses: actions/checkout@v4
+
+      - name: Create Kind Cluster
         uses: helm/kind-action@v1
         with:
           version: v0.20.0
-
-      - name: Verify Cluster
-        run: |
-          kubectl cluster-info
-          kubectl get nodes
 
       - name: Install Falco
         run: |
@@ -142,116 +123,97 @@ jobs:
       - name: Deploy Test Pod
         run: |
           kubectl run ${{ matrix.pod_name }} \
-            --image=${{ matrix.image_name }}:${{ matrix.image_tag }}
+            --image=${{ matrix.image_name }}:${{ matrix.image_tag }} \
+            --command -- sleep 3600
 
           kubectl wait \
             --for=condition=Ready \
             pod/${{ matrix.pod_name }} \
             --timeout=120s
 
+      - name: Verify Pod Status
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pod ${{ matrix.pod_name }}
+
       #################################################################
-      # ATTACK 1 - READ SENSITIVE FILE
+      # ATTACK 1
       #################################################################
 
       - name: Attack 1 - Read Sensitive File
+        continue-on-error: true
         run: |
-          kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "cat /etc/shadow || true"
-
+          kubectl exec ${{ matrix.pod_name }} -- cat /etc/shadow
           sleep 10
 
       #################################################################
-      # ATTACK 2 - MODIFY SENSITIVE FILE PERMISSIONS
+      # ATTACK 2
       #################################################################
 
       - name: Attack 2 - Privilege Change
+        continue-on-error: true
         run: |
-          echo "Before:"
-          kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "ls -l /etc/passwd"
+          kubectl exec ${{ matrix.pod_name }} -- sh -c "ls -l /etc/passwd"
 
           kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "chmod 777 /etc/passwd || true"
+            -- sh -c "chmod 777 /etc/passwd"
 
-          echo "After:"
-          kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "ls -l /etc/passwd"
+          kubectl exec ${{ matrix.pod_name }} -- sh -c "ls -l /etc/passwd"
 
           sleep 10
 
       #################################################################
-      # ATTACK 3 - EXECUTE INTERACTIVE SHELL
+      # ATTACK 3
       #################################################################
 
       - name: Attack 3 - Execute Shell
+        continue-on-error: true
         run: |
           kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "sh -c 'echo shell-executed'"
+            -- sh -c "echo shell-test"
 
           sleep 10
 
       #################################################################
-      # BENIGN ACTIVITY
+      # BENIGN TEST
       #################################################################
 
       - name: Benign Activity
+        continue-on-error: true
         run: |
           kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "touch /tmp/normal-file.txt"
+            -- touch /tmp/normal-file.txt
 
           sleep 10
 
       #################################################################
-      # COLLECT FALCO LOGS
+      # COLLECT LOGS
       #################################################################
 
       - name: Collect Falco Logs
         run: |
           kubectl logs \
             -l app.kubernetes.io/name=falco \
-            --tail=1000 > falco.log
+            --tail=2000 > falco.log
 
           cat falco.log
-
-      - name: Save Runtime Test Summary
-        run: |
-          cat << EOF > test-summary.txt
-          Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}
-
-          Attack 1:
-          Read /etc/shadow
-
-          Attack 2:
-          chmod 777 /etc/passwd
-
-          Attack 3:
-          Execute shell inside container
-
-          Benign Activity:
-          touch /tmp/normal-file.txt
-          EOF
 
       - name: Upload Falco Results
         uses: actions/upload-artifact@v4
         with:
           name: falco-${{ matrix.image_name }}
-          path: |
-            falco.log
-            test-summary.txt
+          path: falco.log
 
       - name: Workflow Summary
         if: always()
         run: |
           {
-            echo "## Container Security Evaluation"
+            echo "## Falco Runtime Evaluation"
             echo ""
-            echo "| Test | Status |"
-            echo "|------|--------|"
-            echo "| Trivy Scan | Completed |"
-            echo "| Read Sensitive File | Executed |"
-            echo "| Permission Change | Executed |"
-            echo "| Shell Execution | Executed |"
-            echo "| Benign Activity | Executed |"
+            echo "Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}"
             echo ""
-            echo "Image Tested: ${{ matrix.image_name }}:${{ matrix.image_tag }}"
+            echo "- Read Sensitive File"
+            echo "- Permission Change"
+            echo "- Execute Shell"
+            echo "- Benign Activity"
           } >> $GITHUB_STEP_SUMMARY
