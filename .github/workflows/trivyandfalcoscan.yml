@@ -11,10 +11,6 @@ permissions:
 
 jobs:
 
-################################################################################
-# TRIVY SCAN
-################################################################################
-
   trivy-scan:
 
     strategy:
@@ -32,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -40,27 +35,27 @@ jobs:
         run: |
           docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
 
-      - name: Collect System Information
+      - name: Collect Performance Information
         run: |
-          echo "===== CPU INFORMATION =====" > performance.txt
+          echo "===== CPU INFO =====" > performance.txt
           lscpu >> performance.txt
 
           echo "" >> performance.txt
-          echo "===== MEMORY INFORMATION =====" >> performance.txt
+          echo "===== MEMORY INFO =====" >> performance.txt
           free -m >> performance.txt
 
-      - name: Start Timer
+      - name: Start Scan Timer
         run: |
           echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
 
-      - name: Trivy JSON Scan
+      - name: Run Trivy JSON Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
           format: json
           output: trivy-results.json
 
-      - name: Trivy Table Scan
+      - name: Run Trivy Table Scan
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
@@ -83,7 +78,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 0
 
-      - name: Upload Trivy Reports
+      - name: Upload Trivy Results
         uses: actions/upload-artifact@v4
         with:
           name: trivy-${{ matrix.image_name }}
@@ -91,10 +86,6 @@ jobs:
             trivy-results.json
             trivy-results.txt
             performance.txt
-
-################################################################################
-# FALCO RUNTIME TESTS
-################################################################################
 
   falco-runtime-test:
 
@@ -118,7 +109,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -159,76 +149,89 @@ jobs:
             pod/${{ matrix.pod_name }} \
             --timeout=120s
 
-      ##########################################################################
-      # ATTACK SCENARIO 1
-      ##########################################################################
+      #################################################################
+      # ATTACK 1 - READ SENSITIVE FILE
+      #################################################################
 
       - name: Attack 1 - Read Sensitive File
         run: |
           kubectl exec ${{ matrix.pod_name }} \
-          -- sh -c "cat /etc/shadow || true"
-
-          sleep 5
-
-      ##########################################################################
-      # ATTACK SCENARIO 2
-      ##########################################################################
-
-      - name: Attack 2 - Privilege Change
-        run: |
-          kubectl exec ${{ matrix.pod_name }} \
-          -- sh -c "chmod 777 /etc/passwd || true"
-
-          sleep 5
-
-      ##########################################################################
-      # ATTACK SCENARIO 3
-      ##########################################################################
-
-      - name: Install Netcat If Available
-        run: |
-          kubectl exec ${{ matrix.pod_name }} \
-          -- sh -c "which nc || true"
-
-      - name: Attack 3 - Network Listener
-        run: |
-          kubectl exec ${{ matrix.pod_name }} \
-          -- sh -c "nc -l -p 4444 || true" &
+            -- sh -c "cat /etc/shadow || true"
 
           sleep 10
 
-      ##########################################################################
+      #################################################################
+      # ATTACK 2 - MODIFY SENSITIVE FILE PERMISSIONS
+      #################################################################
+
+      - name: Attack 2 - Privilege Change
+        run: |
+          echo "Before:"
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "ls -l /etc/passwd"
+
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "chmod 777 /etc/passwd || true"
+
+          echo "After:"
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "ls -l /etc/passwd"
+
+          sleep 10
+
+      #################################################################
+      # ATTACK 3 - EXECUTE INTERACTIVE SHELL
+      #################################################################
+
+      - name: Attack 3 - Execute Shell
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+            -- sh -c "sh -c 'echo shell-executed'"
+
+          sleep 10
+
+      #################################################################
       # BENIGN ACTIVITY
-      ##########################################################################
+      #################################################################
 
       - name: Benign Activity
         run: |
           kubectl exec ${{ matrix.pod_name }} \
-          -- sh -c "touch /tmp/normal-file.txt"
+            -- sh -c "touch /tmp/normal-file.txt"
 
-          sleep 5
+          sleep 10
 
-      ##########################################################################
+      #################################################################
       # COLLECT FALCO LOGS
-      ##########################################################################
+      #################################################################
 
       - name: Collect Falco Logs
         run: |
           kubectl logs \
-          -l app.kubernetes.io/name=falco \
-          --tail=1000 > falco.log
+            -l app.kubernetes.io/name=falco \
+            --tail=1000 > falco.log
 
           cat falco.log
 
       - name: Save Runtime Test Summary
         run: |
-          echo "Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}" > test-summary.txt
-          echo "Attack 1: Read /etc/shadow" >> test-summary.txt
-          echo "Attack 2: chmod 777 /etc/passwd" >> test-summary.txt
-          echo "Attack 3: Open listener on port 4444" >> test-summary.txt
-          echo "Benign Test: touch /tmp/normal-file.txt" >> test-summary.txt
+          cat << EOF > test-summary.txt
+          Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}
 
-      - name: Upload Falco Artifacts
+          Attack 1:
+          Read /etc/shadow
+
+          Attack 2:
+          chmod 777 /etc/passwd
+
+          Attack 3:
+          Execute shell inside container
+
+          Benign Activity:
+          touch /tmp/normal-file.txt
+          EOF
+
+      - name: Upload Falco Results
         uses: actions/upload-artifact@v4
         with:
           name: falco-${{ matrix.image_name }}
@@ -246,8 +249,8 @@ jobs:
             echo "|------|--------|"
             echo "| Trivy Scan | Completed |"
             echo "| Read Sensitive File | Executed |"
-            echo "| Privilege Change | Executed |"
-            echo "| Network Listener | Executed |"
+            echo "| Permission Change | Executed |"
+            echo "| Shell Execution | Executed |"
             echo "| Benign Activity | Executed |"
             echo ""
             echo "Image Tested: ${{ matrix.image_name }}:${{ matrix.image_tag }}"
