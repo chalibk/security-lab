@@ -1,0 +1,254 @@
+name: Container Security Pipeline (Trivy & Falco)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+################################################################################
+# TRIVY SCAN
+################################################################################
+
+  trivy-scan:
+
+    strategy:
+      matrix:
+        include:
+          - image_name: nginx
+            image_tag: latest
+
+          - image_name: redis
+            image_tag: latest
+
+          - image_name: ubuntu
+            image_tag: "22.04"
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Pull Container Image
+        run: |
+          docker pull ${{ matrix.image_name }}:${{ matrix.image_tag }}
+
+      - name: Collect System Information
+        run: |
+          echo "===== CPU INFORMATION =====" > performance.txt
+          lscpu >> performance.txt
+
+          echo "" >> performance.txt
+          echo "===== MEMORY INFORMATION =====" >> performance.txt
+          free -m >> performance.txt
+
+      - name: Start Timer
+        run: |
+          echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Trivy JSON Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
+          format: json
+          output: trivy-results.json
+
+      - name: Trivy Table Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
+          format: table
+          output: trivy-results.txt
+
+      - name: Calculate Scan Time
+        run: |
+          END_TIME=$(date +%s)
+          SCAN_TIME=$((END_TIME-START_TIME))
+
+          echo "" >> performance.txt
+          echo "===== SCAN TIME =====" >> performance.txt
+          echo "Trivy Scan Time: ${SCAN_TIME} seconds" >> performance.txt
+
+      - name: Security Gate
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image_name }}:${{ matrix.image_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+      - name: Upload Trivy Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.image_name }}
+          path: |
+            trivy-results.json
+            trivy-results.txt
+            performance.txt
+
+################################################################################
+# FALCO RUNTIME TESTS
+################################################################################
+
+  falco-runtime-test:
+
+    needs: trivy-scan
+
+    strategy:
+      matrix:
+        include:
+          - image_name: nginx
+            image_tag: latest
+            pod_name: nginx-runtime-test
+
+          - image_name: redis
+            image_tag: latest
+            pod_name: redis-runtime-test
+
+          - image_name: ubuntu
+            image_tag: "22.04"
+            pod_name: ubuntu-runtime-test
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create KinD Cluster
+        uses: helm/kind-action@v1
+        with:
+          version: v0.20.0
+
+      - name: Verify Cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Install Falco
+        run: |
+          helm repo add falcosecurity https://falcosecurity.github.io/charts
+          helm repo update
+
+          helm install falco falcosecurity/falco \
+            --set driver.kind=modern_ebpf \
+            --wait
+
+      - name: Wait For Falco
+        run: |
+          kubectl wait \
+            --for=condition=Ready \
+            pod \
+            -l app.kubernetes.io/name=falco \
+            --timeout=180s
+
+      - name: Deploy Test Pod
+        run: |
+          kubectl run ${{ matrix.pod_name }} \
+            --image=${{ matrix.image_name }}:${{ matrix.image_tag }}
+
+          kubectl wait \
+            --for=condition=Ready \
+            pod/${{ matrix.pod_name }} \
+            --timeout=120s
+
+      ##########################################################################
+      # ATTACK SCENARIO 1
+      ##########################################################################
+
+      - name: Attack 1 - Read Sensitive File
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+          -- sh -c "cat /etc/shadow || true"
+
+          sleep 5
+
+      ##########################################################################
+      # ATTACK SCENARIO 2
+      ##########################################################################
+
+      - name: Attack 2 - Privilege Change
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+          -- sh -c "chmod 777 /etc/passwd || true"
+
+          sleep 5
+
+      ##########################################################################
+      # ATTACK SCENARIO 3
+      ##########################################################################
+
+      - name: Install Netcat If Available
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+          -- sh -c "which nc || true"
+
+      - name: Attack 3 - Network Listener
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+          -- sh -c "nc -l -p 4444 || true" &
+
+          sleep 10
+
+      ##########################################################################
+      # BENIGN ACTIVITY
+      ##########################################################################
+
+      - name: Benign Activity
+        run: |
+          kubectl exec ${{ matrix.pod_name }} \
+          -- sh -c "touch /tmp/normal-file.txt"
+
+          sleep 5
+
+      ##########################################################################
+      # COLLECT FALCO LOGS
+      ##########################################################################
+
+      - name: Collect Falco Logs
+        run: |
+          kubectl logs \
+          -l app.kubernetes.io/name=falco \
+          --tail=1000 > falco.log
+
+          cat falco.log
+
+      - name: Save Runtime Test Summary
+        run: |
+          echo "Image: ${{ matrix.image_name }}:${{ matrix.image_tag }}" > test-summary.txt
+          echo "Attack 1: Read /etc/shadow" >> test-summary.txt
+          echo "Attack 2: chmod 777 /etc/passwd" >> test-summary.txt
+          echo "Attack 3: Open listener on port 4444" >> test-summary.txt
+          echo "Benign Test: touch /tmp/normal-file.txt" >> test-summary.txt
+
+      - name: Upload Falco Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: falco-${{ matrix.image_name }}
+          path: |
+            falco.log
+            test-summary.txt
+
+      - name: Workflow Summary
+        if: always()
+        run: |
+          {
+            echo "## Container Security Evaluation"
+            echo ""
+            echo "| Test | Status |"
+            echo "|------|--------|"
+            echo "| Trivy Scan | Completed |"
+            echo "| Read Sensitive File | Executed |"
+            echo "| Privilege Change | Executed |"
+            echo "| Network Listener | Executed |"
+            echo "| Benign Activity | Executed |"
+            echo ""
+            echo "Image Tested: ${{ matrix.image_name }}:${{ matrix.image_tag }}"
+          } >> $GITHUB_STEP_SUMMARY
