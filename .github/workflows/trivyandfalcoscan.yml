@@ -150,15 +150,10 @@ jobs:
       # ATTACK 2
       #################################################################
 
-      - name: Attack 2 - Privilege Change
-        continue-on-error: true
+      - name: Attack 2 - Write Sensitive File
         run: |
-          kubectl exec ${{ matrix.pod_name }} -- sh -c "ls -l /etc/passwd"
-
           kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "chmod 777 /etc/passwd"
-
-          kubectl exec ${{ matrix.pod_name }} -- sh -c "ls -l /etc/passwd"
+            -- sh -c "echo test >> /etc/passwd"
 
           sleep 10
 
@@ -166,11 +161,10 @@ jobs:
       # ATTACK 3
       #################################################################
 
-      - name: Attack 3 - Execute Shell
-        continue-on-error: true
+      - name: Attack 3 - Terminal Shell
         run: |
           kubectl exec ${{ matrix.pod_name }} \
-            -- sh -c "echo shell-test"
+            -- sh
 
           sleep 10
 
